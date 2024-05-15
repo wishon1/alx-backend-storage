@@ -14,6 +14,105 @@ int or float.
 import redis
 import uuid
 from typing import Union, Callable, Optional
+from functools import wraps
+
+
+def count_calls(method: Callable) -> Callable:
+    """
+    Decorator that counts the number of times a function is called.
+
+    Args:
+        method (Callable): The function to be decorated.
+
+    Returns:
+        Callable: The decorated function.
+    """
+    key = method.__qualname__
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        """
+        Wrapper function for the decorated method.
+
+        Args:
+            self: The instance of the class.
+            *args: Positional arguments passed to the method.
+            **kwargs: Keyword arguments passed to the method.
+
+        Returns:
+            The return value of the decorated method.
+        """
+        self._redis.incr(key)
+        return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+def call_history(method: Callable) -> Callable:
+    """
+    Decorator that stores the history of inputs and outputs of a
+    function.
+
+    Args:
+        method (Callable): The function to be decorated.
+
+    Returns:
+        Callable: The decorated function.
+    """
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        """
+        Wrapper function for the decorated method.
+
+        Args:
+            self: The instance of the class.
+            *args: Positional arguments passed to the method.
+            **kwargs: Keyword arguments passed to the method.
+
+        Returns:
+            The return value of the decorated method.
+        """
+        input = str(args)
+        self._redis.rpush(method.__qualname__ + ":inputs", input)
+        output = str(method(self, *args, **kwargs))
+        self._redis.rpush(method.__qualname__ + ":outputs", output)
+        return output
+
+    return wrapper
+
+
+def replay(fn: Callable):
+    """
+    Display the history of calls of a particular function.
+
+    Args:
+        fn (Callable): The function whose call history is to be
+        displayed.
+    """
+    r = redis.Redis()
+    function_name = fn.__qualname__
+    value = r.get(function_name)
+    try:
+        value = int(value.decode("utf-8"))
+    except Exception:
+        value = 0
+
+    print("{} was called {} times:".format(function_name, value))
+    inputs = r.lrange("{}:inputs".format(function_name), 0, -1)
+    outputs = r.lrange("{}:outputs".format(function_name), 0, -1)
+
+    for input, output in zip(inputs, outputs):
+        try:
+            input = input.decode("utf-8")
+        except Exception:
+            input = ""
+
+        try:
+            output = output.decode("utf-8")
+        except Exception:
+            output = ""
+
+        print("{}(*{}) -> {}".format(function_name, input, output))
 
 
 class Cache:
